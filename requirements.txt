@@ -2,4 +2,3 @@ aiogram
 opencv-python-headless
 numpy
 img2pdf
-aspose-words
