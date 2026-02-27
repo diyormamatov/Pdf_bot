@@ -1,18 +1,17 @@
 import asyncio
-import io
 import os
 import cv2
 import shutil
 import numpy as np
 import img2pdf
-from docx2pdf import convert  # Word to PDF uchun
+import aspose.words as aw  # Linux uchun to'g'ri kutubxona
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import BufferedInputFile, FSInputFile
 
 # 1. Bot tokeningizni kiriting
-TOKEN = "8733916664:AAGSko0YAtATf6pdluZpobKOdCoycjoB65Y"
+TOKEN = os.getenv("TOKEN") or "8733916664:AAGSko0YAtATf6pdluZpobKOdCoycjoB65Y"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -22,7 +21,6 @@ BASE_TEMP_DIR = "temp_files"
 if not os.path.exists(BASE_TEMP_DIR):
     os.makedirs(BASE_TEMP_DIR)
 
-# Foydalanuvchi holatini saqlash (qaysi rejimda ekanligini bilish uchun)
 user_modes = {}
 user_tasks = {}
 user_menu_msg = {}
@@ -54,6 +52,11 @@ def enhance_image_path(image_path):
     )
     is_success, buffer = cv2.imencode(".jpg", enhanced)
     return buffer.tobytes()
+
+def convert_word_to_pdf_linux(input_path, output_path):
+    """Linuxda Wordni PDF qilish uchun Aspose funksiyasi"""
+    doc = aw.Document(input_path)
+    doc.save(output_path)
 
 async def send_final_menu(user_id, chat_id):
     await asyncio.sleep(2.0)
@@ -98,7 +101,6 @@ async def set_mode(callback: types.CallbackQuery):
     else:
         await callback.message.edit_text("Word (.docx) faylini yuboring:")
 
-# --- Photo Handler ---
 @dp.message(F.photo)
 async def handle_photos(message: types.Message):
     uid = message.from_user.id
@@ -115,7 +117,6 @@ async def handle_photos(message: types.Message):
     if uid in user_tasks: user_tasks[uid].cancel()
     user_tasks[uid] = asyncio.create_task(send_final_menu(uid, message.chat.id))
 
-# --- Document Handler (Word uchun) ---
 @dp.message(F.document)
 async def handle_docs(message: types.Message):
     uid = message.from_user.id
@@ -137,18 +138,18 @@ async def handle_docs(message: types.Message):
     await bot.download(message.document, destination=input_path)
 
     try:
-        # Word -> PDF (Bu jarayon bloklovchi bo'lgani uchun thread-da ishlatish tavsiya etiladi)
-        await asyncio.to_thread(convert, input_path, output_path)
+        # Linuxda ishlovchi konvertatsiya
+        await asyncio.to_thread(convert_word_to_pdf_linux, input_path, output_path)
         
         pdf_file = FSInputFile(output_path)
-        await message.answer_document(pdf_file, caption="Word PDF-ga muvaffaqiyatli o'tkazildi!")
+        await message.answer_document(pdf_file, caption="✅ Word PDF-ga muvaffaqiyatli o'tkazildi!")
     except Exception as e:
         await message.answer(f"Xatolik yuz berdi: {str(e)}")
     finally:
-        shutil.rmtree(user_dir)
+        if os.path.exists(user_dir):
+            shutil.rmtree(user_dir)
         await wait_msg.delete()
 
-# --- Image to PDF logic ---
 @dp.callback_query(F.data.startswith("make_pdf_"))
 async def process_pdf(callback: types.CallbackQuery):
     uid = callback.from_user.id
