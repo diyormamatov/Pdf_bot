@@ -1,3 +1,8 @@
+import os
+os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
+
+import asyncio
+# ... qolgan barcha importlar shu yerdan davom etadi
 import asyncio
 import os
 import cv2
