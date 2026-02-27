@@ -1,70 +1,75 @@
-import os
-os.environ["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1"
-
-import asyncio
-# ... qolgan barcha importlar shu yerdan davom etadi
 import asyncio
 import os
 import cv2
 import shutil
 import numpy as np
 import img2pdf
-import aspose.words as aw  # Linux uchun to'g'ri kutubxona
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import BufferedInputFile, FSInputFile
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.types import BufferedInputFile, ReplyKeyboardMarkup, KeyboardButton
 
-# 1. Bot tokeningizni kiriting
+# Bot tokeningizni Railway Variables-dan oladi
 TOKEN = os.getenv("TOKEN") or "8733916664:AAGSko0YAtATf6pdluZpobKOdCoycjoB65Y"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Vaqtinchalik fayllar uchun asosiy papka
 BASE_TEMP_DIR = "temp_files"
 if not os.path.exists(BASE_TEMP_DIR):
     os.makedirs(BASE_TEMP_DIR)
 
-user_modes = {}
 user_tasks = {}
 user_menu_msg = {}
 
 # --- Klaviaturalar ---
 
-def start_keyboard():
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🖼 Rasmni PDF qilish", callback_data="mode_image"))
-    builder.row(types.InlineKeyboardButton(text="📝 Wordni PDF qilish", callback_data="mode_word"))
-    return builder.as_markup()
+def get_main_reply_keyboard():
+    # Bu tugma klaviatura o'rnida har doim turadi
+    builder = ReplyKeyboardBuilder()
+    builder.row(KeyboardButton(text="🚀 Botni qayta ishga tushirish"))
+    return builder.as_markup(resize_keyboard=True)
 
-def main_keyboard(count):
+def get_pdf_keyboard(count):
     builder = InlineKeyboardBuilder()
     builder.row(types.InlineKeyboardButton(text=f"📄 PDF qilish ({count} ta)", callback_data="make_pdf_normal"))
-    builder.row(types.InlineKeyboardButton(text="🖋 Tiniqlashtirish (Qora-Oq)", callback_data="make_pdf_enhanced"))
-    builder.row(types.InlineKeyboardButton(text="🗑 Tozalash", callback_data="clear_all"))
-    builder.row(types.InlineKeyboardButton(text="⬅️ Orqaga", callback_data="back_to_main"))
+    builder.row(types.InlineKeyboardButton(text="✨ Tiniqlashtirish (B&W)", callback_data="make_pdf_enhanced"))
+    builder.row(types.InlineKeyboardButton(text="🗑 Hammasini o'chirish", callback_data="clear_all"))
     return builder.as_markup()
 
-# --- Yordamchi funksiyalar ---
+# --- Tasvirni qayta ishlash ---
 
-def enhance_image_path(image_path):
+def enhance_image(image_path):
     img = cv2.imread(image_path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Hujjat sifatini oshirish uchun Adaptive Threshold
     enhanced = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-        cv2.THRESH_BINARY, 11, 10
+        cv2.THRESH_BINARY, 11, 12
     )
     is_success, buffer = cv2.imencode(".jpg", enhanced)
     return buffer.tobytes()
 
-def convert_word_to_pdf_linux(input_path, output_path):
-    """Linuxda Wordni PDF qilish uchun Aspose funksiyasi"""
-    doc = aw.Document(input_path)
-    doc.save(output_path)
+# --- Handlerlar ---
 
-async def send_final_menu(user_id, chat_id):
-    await asyncio.sleep(2.0)
+@dp.message(Command("start"))
+@dp.message(F.text == "🚀 Botni qayta ishga tushirish")
+async def start_cmd(message: types.Message):
+    # Foydalanuvchi papkasini tozalash
+    user_dir = os.path.join(BASE_TEMP_DIR, str(message.from_user.id))
+    if os.path.exists(user_dir):
+        shutil.rmtree(user_dir)
+    
+    await message.answer(
+        "👋 **Assalomu alaykum!**\n\n"
+        "Men rasmlaringizni sifatli PDF qilib beruvchi botman.\n"
+        "🖼 **Menga rasm(lar) yuboring...**",
+        reply_markup=get_main_reply_keyboard(),
+        parse_mode="Markdown"
+    )
+
+async def send_menu_with_delay(user_id, chat_id):
+    await asyncio.sleep(1.5) # Rasmlar yuklanishini kutish
     user_dir = os.path.join(BASE_TEMP_DIR, str(user_id))
     if not os.path.exists(user_dir): return
 
@@ -72,88 +77,30 @@ async def send_final_menu(user_id, chat_id):
     count = len(photos)
     if count == 0: return
 
-    text = f"✅ {count} ta rasm tayyor.\n\nPDF turini tanlang:"
-    kb = main_keyboard(count)
+    text = f"📸 **{count} ta rasm qabul qilindi.**\n\nQuyidagi amallardan birini tanlang:"
+    kb = get_pdf_keyboard(count)
 
+    # Agar oldingi menyu bo'lsa, uni o'chirib yangisini yuboramiz
     if user_id in user_menu_msg:
-        try:
-            await bot.edit_message_text(text, chat_id, user_menu_msg[user_id], reply_markup=kb)
-        except:
-            msg = await bot.send_message(chat_id, text, reply_markup=kb)
-            user_menu_msg[user_id] = msg.message_id
-    else:
-        msg = await bot.send_message(chat_id, text, reply_markup=kb)
-        user_menu_msg[user_id] = msg.message_id
+        try: await bot.delete_message(chat_id, user_menu_msg[user_id])
+        except: pass
 
-# --- Handlerlar ---
-
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    user_modes[message.from_user.id] = None
-    await message.answer("Xush kelibsiz! Kerakli bo'limni tanlang:", reply_markup=start_keyboard())
-
-@dp.callback_query(F.data == "back_to_main")
-async def back_main(callback: types.CallbackQuery):
-    user_modes[callback.from_user.id] = None
-    await callback.message.edit_text("Kerakli bo'limni tanlang:", reply_markup=start_keyboard())
-
-@dp.callback_query(F.data.startswith("mode_"))
-async def set_mode(callback: types.CallbackQuery):
-    mode = callback.data.split("_")[1]
-    user_modes[callback.from_user.id] = mode
-    if mode == "image":
-        await callback.message.edit_text("Rasmlarni yuboring (bir nechta yuborishingiz mumkin):")
-    else:
-        await callback.message.edit_text("Word (.docx) faylini yuboring:")
+    msg = await bot.send_message(chat_id, text, reply_markup=kb, parse_mode="Markdown")
+    user_menu_msg[user_id] = msg.message_id
 
 @dp.message(F.photo)
-async def handle_photos(message: types.Message):
+async def handle_photo(message: types.Message):
     uid = message.from_user.id
-    if user_modes.get(uid) != "image":
-        await message.answer("Iltimos, avval 'Rasmni PDF qilish' bo'limini tanlang.")
-        return
-
     user_dir = os.path.join(BASE_TEMP_DIR, str(uid))
     if not os.path.exists(user_dir): os.makedirs(user_dir)
     
-    photo_path = os.path.join(user_dir, f"{message.message_id}.jpg")
-    await bot.download(message.photo[-1], destination=photo_path)
+    file_path = os.path.join(user_dir, f"{message.message_id}.jpg")
+    await bot.download(message.photo[-1], destination=file_path)
 
-    if uid in user_tasks: user_tasks[uid].cancel()
-    user_tasks[uid] = asyncio.create_task(send_final_menu(uid, message.chat.id))
-
-@dp.message(F.document)
-async def handle_docs(message: types.Message):
-    uid = message.from_user.id
-    if user_modes.get(uid) != "word":
-        await message.answer("Iltimos, avval 'Wordni PDF qilish' bo'limini tanlang.")
-        return
-
-    if not message.document.file_name.endswith(".docx"):
-        await message.answer("Faqat .docx formatidagi fayllarni qabul qilaman!")
-        return
-
-    wait_msg = await message.answer("⏳ Word PDF-ga o'tkazilmoqda...")
-    user_dir = os.path.join(BASE_TEMP_DIR, str(uid))
-    if not os.path.exists(user_dir): os.makedirs(user_dir)
-
-    input_path = os.path.join(user_dir, message.document.file_name)
-    output_path = input_path.replace(".docx", ".pdf")
-
-    await bot.download(message.document, destination=input_path)
-
-    try:
-        # Linuxda ishlovchi konvertatsiya
-        await asyncio.to_thread(convert_word_to_pdf_linux, input_path, output_path)
-        
-        pdf_file = FSInputFile(output_path)
-        await message.answer_document(pdf_file, caption="✅ Word PDF-ga muvaffaqiyatli o'tkazildi!")
-    except Exception as e:
-        await message.answer(f"Xatolik yuz berdi: {str(e)}")
-    finally:
-        if os.path.exists(user_dir):
-            shutil.rmtree(user_dir)
-        await wait_msg.delete()
+    # Taymerni yangilash (bir nechta rasm yuborilganda oxirida menyu chiqarish)
+    if uid in user_tasks:
+        user_tasks[uid].cancel()
+    user_tasks[uid] = asyncio.create_task(send_menu_with_delay(uid, message.chat.id))
 
 @dp.callback_query(F.data.startswith("make_pdf_"))
 async def process_pdf(callback: types.CallbackQuery):
@@ -161,44 +108,44 @@ async def process_pdf(callback: types.CallbackQuery):
     mode = callback.data.split("_")[-1]
     user_dir = os.path.join(BASE_TEMP_DIR, str(uid))
 
-    if not os.path.exists(user_dir):
-        await callback.answer("Rasmlar topilmadi!")
+    if not os.path.exists(user_dir) or not os.listdir(user_dir):
+        await callback.answer("⚠️ Rasmlar topilmadi, iltimos qayta yuboring.")
         return
 
-    await callback.message.edit_text("⏳ PDF tayyorlanmoqda...")
+    await callback.message.edit_text("⏳ **PDF tayyorlanmoqda, iltimos kuting...**", parse_mode="Markdown")
 
     try:
-        photo_files = sorted([os.path.join(user_dir, f) for f in os.listdir(user_dir) if f.endswith('.jpg')], 
-                            key=os.path.getmtime)
-        
-        pdf_images = []
-        for p in photo_files:
-            if mode == "enhanced":
-                pdf_images.append(enhance_image_path(p))
-            else:
-                with open(p, "rb") as f:
-                    pdf_images.append(f.read())
+        # Rasmlarni tartiblash
+        files = sorted([os.path.join(user_dir, f) for f in os.listdir(user_dir)], key=os.path.getmtime)
+        pdf_data = []
 
-        pdf_bytes = img2pdf.convert(pdf_images)
-        pdf_file = BufferedInputFile(pdf_bytes, filename="Tayyor_fayl.pdf")
+        for f in files:
+            if mode == "enhanced":
+                pdf_data.append(enhance_image(f))
+            else:
+                with open(f, "rb") as img_file:
+                    pdf_data.append(img_file.read())
+
+        pdf_bytes = img2pdf.convert(pdf_data)
+        final_pdf = BufferedInputFile(pdf_bytes, filename="PDF_Hujjat.pdf")
         
-        await callback.message.answer_document(pdf_file, caption="Sizning PDFingiz tayyor!")
+        await callback.message.answer_document(final_pdf, caption="✅ **PDF tayyor bo'ldi!**")
         shutil.rmtree(user_dir)
-        if uid in user_menu_msg: del user_menu_msg[uid]
         await callback.message.delete()
         
     except Exception as e:
-        await callback.message.answer(f"Xatolik: {str(e)[:50]}")
+        await callback.message.answer(f"❌ Xatolik yuz berdi: {str(e)[:50]}")
 
 @dp.callback_query(F.data == "clear_all")
-async def clear(callback: types.CallbackQuery):
+async def clear_data(callback: types.CallbackQuery):
     uid = callback.from_user.id
     user_dir = os.path.join(BASE_TEMP_DIR, str(uid))
-    if os.path.exists(user_dir): shutil.rmtree(user_dir)
-    if uid in user_menu_msg: del user_menu_msg[uid]
-    await callback.message.edit_text("Hamma rasmlar o'chirildi.", reply_markup=start_keyboard())
+    if os.path.exists(user_dir):
+        shutil.rmtree(user_dir)
+    await callback.message.edit_text("🗑 Barcha rasmlar tozalandi. Yangi rasm yuborishingiz mumkin.")
 
 async def main():
+    print("Bot ishga tushdi...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
